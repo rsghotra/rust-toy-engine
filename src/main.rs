@@ -4,6 +4,7 @@ use csv::ReaderBuilder;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::io;
 
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -22,7 +23,7 @@ pub enum TxnStatus {
     Disputed
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct Transaction {
     #[serde(rename = "type")]
     kind: TxnKind,
@@ -37,7 +38,7 @@ impl Transaction {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Account {
     available: Decimal,
     held: Decimal,
@@ -138,4 +139,23 @@ fn main() {
             Err(e) => eprintln!("Bad row: {}", e),
         }
     }
+    //here need to output shit to csv
+    let mut output = csv::Writer::from_writer(io::stdout());
+
+    //need to write header manually still
+    output.write_record(&["client", "available", "held", "total", "locked"]).expect("Failed to write header");
+
+    for (client, account) in &accounts {
+        output.serialize((
+            client,
+            account.available,
+            account.held,
+            account.total,
+            account.locked,
+        )).expect("Failed to write account record");
+    }
+
+    output.flush().expect("Failed to flush writer");
+
 }
+
