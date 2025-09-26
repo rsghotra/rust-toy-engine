@@ -1,5 +1,27 @@
---> Assumptions:
+- Assumptions:
+1. Dispute only for Withdrawal transaction though code extendible to handle deposit disputes too
 
-- dispute is only for outgoing transaction;
+- How to use?
+1. CLI Mode: cargo run -- transactions.csv
+2. TCP Mode(starts TCP server for concurrent processing): cargo run
 
-- https://docs.rs/csv/latest/csv/tutorial/index.html 
+
+References:
+1. CSV Crate:
+2. Rust Book:
+3. Code Academy:
+4. Let's get Rusty:
+
+
+LLMs: ChatGPT
+Prompts:
+1. Async/Await vs Threading
+2. Single Consumer Multi Producer vs Multi Consumer Single Prdocuer
+3. Message Passing, Concurrency, and Multithreading Rust
+4.
+5.
+6.
+7.
+8.
+9.
+10.
