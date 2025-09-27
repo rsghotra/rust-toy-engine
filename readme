@@ -1,18 +1,43 @@
+Payment Engine: Processes deposits, withdrawals, disputes, resolves, and chargebacks
+
 - Assumptions:
-1. Dispute only for Withdrawal transaction though code extendible to handle deposit disputes too
+1. Dispute only for Deposit transaction only(though code extendible to handle deposit withdrawal easily)
+2. Global unique txn id and client id
+3. In-memory storage
 
 - How to use?
-1. CLI Mode: cargo run -- transactions.csv
-2. TCP Mode(starts TCP server for concurrent processing): cargo run
+1. CLI: cargo run -- transactions.csv > accounts.csv
+2. TCP: cargo run (server on 127.0.0.1:8080)
 
-References:
-1. CSV Crate:
-2. Rust Book:
-3. Code Academy:
-4. Let's get Rusty:
+- Correctness
+1. Leverages Rust's type system to ensure correctness
+2. rust_decimal::Decimal: Prevents floating-point precision errors in financial calculations (critical for payment systems)
+3. Strong enum types: TxnKind and TxnStatus prevent invalid transaction types and state transitions at compile-time
+4. Option types: Option<Decimal> handles optional amounts safely for dispute/resolve/chargeback transactions
+5. Unit tests are not exhaustive but provided for main scenarios
 
-LLMs: ChatGPT
-Prompts:
+- References:
+1. The Book: https://doc.rust-lang.org/book/
+2. Code Academy: https://www.youtube.com/watch?v=BpPEoZW5IiY&t=45818s&pp=ygURcnVzdCBjb2RlIGFjYWRlbXk%3D 
+3. Let's get Rusty: https://www.youtube.com/@letsgetrusty 
+
+- Known Security Limitations
+1. Public struct fields: Account and Transaction fields are public for simplicity; production would use private fields with accessor methods
+2. Input validation: File path injection possible; production would need path sanitization
+3. Resource limits: No bounds on memory usage or connection limits in TCP mode
+
+- Error Handling
+1. Warnings on invalid operations (insufficient funds, missing transactions)
+2. CSV parse errors logged but processing continues
+3. File I/O errors halt processing
+
+- Logging
+1. Basic console logging - no fancy structs
+
+- LLM 
+1. Claude Sonnet 4
+
+- Prompts
 1. Async/Await vs Threading in rust
 2. Single Consumer Multi Producer vs Multi Consumer Single Producer
 3. Message Passing on Channel  - Rust syntax
@@ -21,12 +46,6 @@ Prompts:
 6. Does Asycn channel auto drops it self or channel needs to be closed mannually?
 7. Why compiler not showing error - variable is moved?
 8. Box, Dyn, Error propogations in Rust
-9. Clocing Active tcp connections: by counter, timer or some other signal?
+9. Closing Active tcp connections: by counter, timer or some other signal?
 10. Clone vs Copy macro -- structs with primitives no advantage. With non primitives - Copy is preferable
-
-Security Concerns:
-
-1. Structs Account and Transactions are public including its field public; For assignment purpose, kept them public for simplicity.
-2. Access methods could be used
-3. Since, input is a string which is file name; Therefore, vulnerable script/injection can occur
-4. More input validation & balance validation could be provided
+11. Handle graceful shutdown with Ctrl+C & output csv -- TCP server

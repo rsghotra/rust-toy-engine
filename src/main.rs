@@ -1,10 +1,11 @@
-use log::info;
 use std::io;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncBufReadExt;
+use tokio::time::{timeout, Duration};
 use csv::ReaderBuilder;
 use rust_decimal::Decimal;
 
@@ -70,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         process_single_file(transaction_file)?;
     } else {
         //TCP server mode - extension for concurrent processing
-        println!("Starting TCP server mode..");
+        info!("Starting TCP server mode..");
         start_tcp_server().await?;
     }
     Ok(())
@@ -92,65 +93,73 @@ fn process_single_file(file_path: &str) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-async fn start_tcp_server() -> Result<(), Box<dyn std::error::Error>> {
-    // Setup channel for transactions
+pub async fn start_tcp_server() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::channel::<Transaction>(100_000);
 
-    // Set up TCP listener
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
-    println!("TCP server listening on 127.0.0.1:8080...");
+    info!("TCP server listening on 127.0.0.1:8080...");
 
-    // Single Consumer which adjusts accounts and maintains global state
-    tokio::spawn(async move {
-        //declare global accounts, transaction
-        let mut accounts: HashMap<u16, Account> =  HashMap::new();
+    let consumer = tokio::spawn(async move {
+        let mut accounts: HashMap<u16, Account> = HashMap::new();
         let mut transactions: HashMap<u32, (TxnKind, Decimal, TxnStatus)> = HashMap::new();
 
-        while let Some(transaction) = rx.recv().await {
-            process_transaction(&transaction, &mut accounts, &mut transactions);
-        }
-        output_results(&accounts).expect("Failed to output results");
-    });
-
-    //Multiple producers which reads transaction and send to consumer for processing
-    loop {
-        let (socket, addr) = listener.accept().await.expect("Failed to accept connection");
-        info!("New connection from: {}", addr);
-        let sender = tx.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(socket);
-            let mut file_path = String::new();
-
-            if let Ok(_) = reader.read_line(&mut file_path).await {
-                let file_path = file_path.trim().trim_matches('\0').replace('\r', "");
-                info!("Producer {}: Processing CSV file: {}", addr, file_path);
-
-                // Open and stream CSV file
-                match ReaderBuilder::new().trim(csv::Trim::All).from_path(&file_path) {
-                    Ok(mut rdr) => {
-                        // Send each transaction to consumer
-                        for record in rdr.deserialize::<Transaction>() {
-                            match record {
-                                Ok(transaction) => {
-                                    if let Err(e) = sender.send(transaction).await {
-                                        eprintln!("Failed to send transaction: {}", e);
-                                        break;
-                                    }
-                                }
-                                Err(err) => {
-                                    eprintln!("Error parsing record from {}: {}", file_path, err);
-                                }
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        eprintln!("Failed to open CSV file {}: {}", file_path, err);
-                    }
+        loop {
+            match timeout(Duration::from_secs(3), rx.recv()).await {
+                Ok(Some(transaction)) => {
+                    // Process transaction normally
+                    process_transaction(&transaction, &mut accounts, &mut transactions);
+                }
+                Ok(None) => {
+                    // Channel closed - server shutting down
+                    info!("=== Channel closed, final results ===");
+                    output_results(&accounts).expect("Failed to output results");
+                    break;
+                }
+                Err(_) => {
+                    // Timeout - no transactions for 10 seconds
+                    info!("=== No activity for 10 seconds, current results ===");
+                    output_results(&accounts).expect("Failed to output results");
+                    // Continue waiting for more transactions
                 }
             }
-        });
+        }
+    });
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!("\nCtrl+C → shutting down gracefully…");
+                break;
+            }
+            Ok((socket, addr)) = listener.accept() => {
+                info!("New connection from: {}", addr);
+                let sender = tx.clone();
+                tokio::spawn(async move {
+                    let mut reader = tokio::io::BufReader::new(socket);
+                    let mut file_path = String::new();
+                    if let Ok(_) = reader.read_line(&mut file_path).await {
+                        let file_path = file_path.trim().trim_matches('\0').replace('\r', "");
+                        info!("Producer {}: Processing CSV file: {}", addr, file_path);
+                        match csv::ReaderBuilder::new().trim(csv::Trim::All).from_path(&file_path) {
+                            Ok(mut rdr) => {
+                                for record in rdr.deserialize::<Transaction>() {
+                                    match record {
+                                        Ok(t) => { if sender.send(t).await.is_err() { break; } }
+                                        Err(e) => eprintln!("Error parsing {}: {}", file_path, e),
+                                    }
+                                }
+                            }
+                            Err(e) => eprintln!("Failed to open {}: {}", file_path, e),
+                        }
+                    }
+                });
+            }
+        }
     }
-    
+
+    drop(tx);              // close channel so consumer gets Ok(None)
+    let _ = consumer.await; // wait for final output
+    Ok(())
 }
 
 fn process_transaction(transaction: &Transaction, accounts: &mut HashMap<u16, Account>, transactions: &mut HashMap<u32, (TxnKind, Decimal, TxnStatus)>) {
@@ -180,26 +189,37 @@ fn process_transaction(transaction: &Transaction, accounts: &mut HashMap<u16, Ac
                         account.available -= amt;
                         account.total -= amt;
                         transactions.insert(transaction.tx, (transaction.kind, amt, TxnStatus::Okay));
+                    } else {
+                        warn!("Withdrawal failed - insufficient funds: client={}, tx={}, amount={}, available={}", 
+                                transaction.client, transaction.tx, amt, account.available);
                     }
                 }
             },
             TxnKind::Dispute => {
                 if let Some(txn_record) = transactions.get_mut(&transaction.tx) {
-                    //deposit only dispute though can easily implement withdraw too as a dispute
                     if matches!(txn_record.0, TxnKind::Deposit) && txn_record.2 == TxnStatus::Okay {
                         account.held +=  txn_record.1;
                         account.available -= txn_record.1;
                         txn_record.2 = TxnStatus::Disputed;
+                    } else {
+                        warn!("Dispute failed - transaction not found: client={}, tx={}", 
+                            transaction.client, transaction.tx);
                     }
                 }
             },
             TxnKind::Resolve => {
                 if let Some(txn_record) = transactions.get_mut(&transaction.tx) {
-                        if txn_record.2 == TxnStatus::Disputed {
-                            account.held -=  txn_record.1;
-                            account.available += txn_record.1;
-                            txn_record.2 = TxnStatus::Okay;
-                        }
+                    if txn_record.2 == TxnStatus::Disputed {
+                        account.held -=  txn_record.1;
+                        account.available += txn_record.1;
+                        txn_record.2 = TxnStatus::Okay;
+                    } else {
+                        warn!("Resolve/Chargeback failed - not disputed: client={}, tx={}", 
+                            transaction.client, transaction.tx);
+                    }
+                } else {
+                    warn!("Resolve/Chargeback failed - transaction not found: client={}, tx={}", 
+                        transaction.client, transaction.tx);
                 }
             },
             TxnKind::Chargeback => {
