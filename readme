@@ -5,23 +5,28 @@
 1. CLI Mode: cargo run -- transactions.csv
 2. TCP Mode(starts TCP server for concurrent processing): cargo run
 
-
 References:
 1. CSV Crate:
 2. Rust Book:
 3. Code Academy:
 4. Let's get Rusty:
 
-
 LLMs: ChatGPT
 Prompts:
-1. Async/Await vs Threading
-2. Single Consumer Multi Producer vs Multi Consumer Single Prdocuer
-3. Message Passing, Concurrency, and Multithreading Rust
-4.
-5.
-6.
-7.
-8.
-9.
-10.
+1. Async/Await vs Threading in rust
+2. Single Consumer Multi Producer vs Multi Consumer Single Producer
+3. Message Passing on Channel  - Rust syntax
+4. Tokio Semaphores vs AtomicUsize for tracking active TCP connections
+5. Ending TCP socket when processing ends from one of the async calls
+6. Does Asycn channel auto drops it self or channel needs to be closed mannually?
+7. Why compiler not showing error - variable is moved?
+8. Box, Dyn, Error propogations in Rust
+9. Clocing Active tcp connections: by counter, timer or some other signal?
+10. Clone vs Copy macro -- structs with primitives no advantage. With non primitives - Copy is preferable
+
+Security Concerns:
+
+1. Structs Account and Transactions are public including its field public; For assignment purpose, kept them public for simplicity.
+2. Access methods could be used
+3. Since, input is a string which is file name; Therefore, vulnerable script/injection can occur
+4. More input validation & balance validation could be provided
