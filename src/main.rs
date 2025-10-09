@@ -116,8 +116,8 @@ pub async fn start_tcp_server() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
                 Err(_) => {
-                    // Timeout - no transactions for 10 seconds
-                    info!("=== No activity for 10 seconds, current results ===");
+                    // Timeout - no transactions for 3 seconds
+                    info!("=== No activity for 3 seconds, current results ===");
                     output_results(&accounts).expect("Failed to output results");
                     // Continue waiting for more transactions
                 }
@@ -125,6 +125,7 @@ pub async fn start_tcp_server() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    //producers
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -136,9 +137,9 @@ pub async fn start_tcp_server() -> Result<(), Box<dyn std::error::Error>> {
                 let sender = tx.clone();
                 tokio::spawn(async move {
                     let mut reader = tokio::io::BufReader::new(socket);
-                    let mut file_path = String::new();
-                    if let Ok(_) = reader.read_line(&mut file_path).await {
-                        let file_path = file_path.trim().trim_matches('\0').replace('\r', "");
+                    let mut raw_path = String::new();
+                    if let Ok(_) = reader.read_line(&mut raw_path).await {
+                        let file_path = raw_path.trim().trim_matches('\0').replace('\r', "");
                         info!("Producer {}: Processing CSV file: {}", addr, file_path);
                         match csv::ReaderBuilder::new().trim(csv::Trim::All).from_path(&file_path) {
                             Ok(mut rdr) => {
@@ -151,8 +152,14 @@ pub async fn start_tcp_server() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             Err(e) => eprintln!("Failed to open {}: {}", file_path, e),
                         }
+                    } else {
+                        eprintln!("read_line() failed or connection closed");
+                        return;
                     }
                 });
+            }
+            Err(e) = listener.accept() => {
+                eprintln!("listener.accept() failed: {}", e);
             }
         }
     }
@@ -209,7 +216,7 @@ fn process_transaction(transaction: &Transaction, accounts: &mut HashMap<u16, Ac
             },
             TxnKind::Resolve => {
                 if let Some(txn_record) = transactions.get_mut(&transaction.tx) {
-                    if txn_record.2 == TxnStatus::Disputed {
+                    if txn_record.2 == TxnStatus::Disputed { // should have condition to check if txn is of type deposit(for consistency)
                         account.held -=  txn_record.1;
                         account.available += txn_record.1;
                         txn_record.2 = TxnStatus::Okay;
@@ -224,7 +231,7 @@ fn process_transaction(transaction: &Transaction, accounts: &mut HashMap<u16, Ac
             },
             TxnKind::Chargeback => {
                 if let Some(txn_record) = transactions.get_mut(&transaction.tx) {
-                    if txn_record.2 == TxnStatus::Disputed {
+                    if txn_record.2 == TxnStatus::Disputed { // should have condition to check if txn is of type deposit(for consistency)
                         account.held -=  txn_record.1;
                         account.total -= txn_record.1;
                         account.locked = true;
@@ -236,13 +243,11 @@ fn process_transaction(transaction: &Transaction, accounts: &mut HashMap<u16, Ac
 }
 
 fn output_results(accounts: &HashMap<u16, Account>) -> Result<(), Box<dyn std::error::Error>> {
-    //here need to output shit to csv
     let mut output = csv::Writer::from_writer(io::stdout());
 
     //need to write header manually still
     output.write_record(&["client", "available", "held", "total", "locked"])?;
 
-    //spawn threading to output the csv quickly
     for (client, account) in accounts {
         output.serialize((
             client,
