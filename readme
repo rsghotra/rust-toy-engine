@@ -1,7 +1,7 @@
 Payment Engine: Processes deposits, withdrawals, disputes, resolves, and chargebacks
 
 - Assumptions:
-1. Dispute only for Deposit transaction only(though code extendible to handle deposit withdrawal easily)
+1. Dispute only for Deposit transaction only(though code extendible to handle Withdrawal dispute easily)
 2. Global unique txn id and client id
 3. In-memory storage
 
